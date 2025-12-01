@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mix & Match - P&L Oyunu</title>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        .dragging {
+            opacity: 0.5;
+            transform: scale(0.95);
+        }
+        .items-container {
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        @media (min-width: 768px) {
+            .items-container {
+                max-height: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        window.storage = {
+            data: {},
+            async get(key, shared) {
+                const storageKey = shared ? `shared_${key}` : key;
+                const item = localStorage.getItem(storageKey);
+                return item ? { key, value: item, shared } : null;
+            },
+            async set(key, value, shared) {
+                const storageKey = shared ? `shared_${key}` : key;
+                localStorage.setItem(storageKey, value);
+                return { key, value, shared };
+            },
+            async list(prefix, shared) {
+                const keys = [];
+                const storagePrefix = shared ? `shared_${prefix || ''}` : (prefix || '');
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key.startsWith(storagePrefix)) {
+                        keys.push(key);
+                    }
+                }
+                return { keys, prefix, shared };
+            }
+        };
+
+        const MixMatchGame = () => {
+            const [gameStarted, setGameStarted] = useState(false);
+            const [nickname, setNickname] = useState('');
+            const [draggedItem, setDraggedItem] = useState(null);
+            const [placements, setPlacements] = useState({});
+            const [submitted, setSubmitted] = useState(false);
+            const [score, setScore] = useState(0);
+            const [leaderboard, setLeaderboard] = useState([]);
+            const [showLeaderboard, setShowLeaderboard] = useState(false);
+            const [touchStartY, setTouchStartY] = useState(null);
+            const [ghostElement, setGhostElement] = useState(null);
+
+            const correctAnswers = {
+                1: 'Turnover Gross',
+                2: 'Var. Costs Sales',
+                3: 'Var. Cost Logistic',
+                4: 'Var. Factory Costs',
+                5: 'Contribution Margin I',
+                6: 'Fixed Factory Costs',
+                7: 'Development',
+                8: 'Sales Deductions',
+                9: 'SG&A local regional',
+                10: 'SG&A Global',
+                11: 'EBIT',
+                12: 'Due Date Effects',
+                13: 'Sales Quantity',
+                14: 'Turnover Net'
+            };
+
+            const items = [
+                'SG&A Global',
+                'Sales Deductions',
+                'Var. Cost Logistic',
+                'Sales Quantity',
+                'EBIT',
+                'Turnover Net',
+                'Development',
+                'Contribution Margin I',
+                'Fixed Factory Costs',
+                'Due Date Effects',
+                'Var. Factory Costs',
+                'SG&A local regional',
+                'Turnover Gross',
+                'Var. Costs Sales'
+            ];
+
+            useEffect(() => {
+                loadLeaderboard();
+            }, []);
+
+            const loadLeaderboard = async () => {
+                try {
+                    const result = await window.storage.list('shared_score:', true);
+                    if (result && result.keys) {
+                        const scores = await Promise.all(
+                            result.keys.map(async (key) => {
+                                try {
+                                    const data = await window.storage.get(key.replace('shared_', ''), true);
+                                    return data ? JSON.parse(data.value) : null;
+                                } catch {
+                                    return null;
+                                }
+                            })
+                        );
+                        const validScores = scores.filter(s => s !== null);
+                        validScores.sort((a, b) => b.score - a.score);
+                        setLeaderboard(validScores.slice(0, 10));
+                    }
+                } catch (error) {
+                    console.log('Liderlik tablosu yüklenemedi');
+                }
+            };
+
+            const startGame = () => {
+                if (nickname.trim()) {
+                    setGameStarted(true);
+                }
+            };
+
+            const handleDragStart = (item) => {
+                setDraggedItem(item);
+            };
+
+            const handleDrop = (rowNumber) => {
+                if (draggedItem && !submitted) {
+                    setPlacements({...placements, [rowNumber]: draggedItem});
+                    setDraggedItem(null);
+                }
+            };
+
+            const handleDragOver = (e) => {
+                e.preventDefault();
+            };
+
+            const handleTouchStart = (e, item) => {
+                if (submitted) return;
+                e.preventDefault();
+                setDraggedItem(item);
+                setTouchStartY(e.touches[0].clientY);
+            };
+
+            const handleTouchMove = (e) => {
+                if (!draggedItem || submitted) return;
+                e.preventDefault();
+            };
+
+            const handleTouchEnd = (e, rowNumber) => {
+                if (!draggedItem || submitted) return;
+                e.preventDefault();
+                setPlacements({...placements, [rowNumber]: draggedItem});
+                setDraggedItem(null);
+                setTouchStartY(null);
+            };
+
+            const removeItem = (rowNumber) => {
+                if (!submitted) {
+                    const newPlacements = {...placements};
+                    delete newPlacements[rowNumber];
+                    setPlacements(newPlacements);
+                }
+            };
+
+            const calculateScore = () => {
+                let correct = 0;
+                Object.keys(correctAnswers).forEach(row => {
+                    if (placements[row] === correctAnswers[row]) {
+                        correct++;
+                    }
+                });
+                return Math.round((correct / 14) * 100);
+            };
+
+            const handleSubmit = async () => {
+                const finalScore = calculateScore();
+                setScore(finalScore);
+                setSubmitted(true);
+
+                try {
+                    const scoreData = {
+                        nickname: nickname,
+                        score: finalScore,
+                        timestamp: new Date().toISOString()
+                    };
+                    const key = `score:${Date.now()}_${nickname.replace(/\s/g, '_')}`;
+                    await window.storage.set(key, JSON.stringify(scoreData), true);
+                    await loadLeaderboard();
+                } catch (error) {
+                    console.log('Skor kaydedilemedi');
+                }
+            };
+
+            const resetGame = () => {
+                setPlacements({});
+                setSubmitted(false);
+                setScore(0);
+                setGameStarted(false);
+                setNickname('');
+            };
+
+            const placedItems = Object.values(placements);
+            const availableItems = items.filter(item => !placedItems.includes(item));
+
+            if (!gameStarted) {
+                return (
+                    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4 sm:p-8 flex items-center justify-center">
+                        <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-12 max-w-md w-full">
+                            <div className="text-center mb-8">
+                                <h1 className="text-3xl sm:text-4xl font-bold text-slate-800 mb-3">Mix & Match!</h1>
+                                <p className="text-slate-600">P&L Kalemlerini Doğru Yere Yerleştir</p>
+                            </div>
+                            
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-slate-700 mb-2">
+                                    Nickname
+                                </label>
+                                <input
+                                    type="text"
+                                    value={nickname}
+                                    onChange={(e) => setNickname(e.target.value)}
+                                    onKeyPress={(e) => e.key === 'Enter' && startGame()}
+                                    placeholder="İsmini gir..."
+                                    className="w-full px-4 py-3 border-2 border-slate-300 rounded-lg focus:outline-none focus:border-orange-500 text-lg"
+                                />
+                            </div>
+                            
+                            <button
+                                onClick={startGame}
+                                disabled={!nickname.trim()}
+                                className="w-full bg-orange-500 text-white py-4 rounded-lg font-semibold text-lg hover:bg-orange-600 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors"
+                            >
+                                Oyuna Başla
+                            </button>
+
+                            <button
+                                onClick={() => {loadLeaderboard(); setShowLeaderboard(true);}}
+                                className="w-full mt-4 bg-slate-700 text-white py-3 rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-slate-600 transition-colors"
+                            >
+                                🏆 Liderlik Tablosu
+                            </button>
+
+                            {showLeaderboard && leaderboard.length > 0 && (
+                                <div className="mt-6 bg-slate-50 rounded-lg p-4">
+                                    <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                        🏆 Top 10
+                                    </h3>
+                                    <div className="space-y-2">
+                                        {leaderboard.map((entry, idx) => (
+                                            <div key={idx} className="flex justify-between items-center text-sm">
+                                                <span className="text-slate-700">
+                                                    {idx + 1}. {entry.nickname}
+                                                </span>
+                                                <span className="font-bold text-orange-600">{entry.score}%</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-2 sm:p-8">
+                    <div className="max-w-7xl mx-auto">
+                        <div className="bg-white rounded-2xl shadow-2xl p-3 sm:p-8">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 gap-2">
+                                <div>
+                                    <h1 className="text-xl sm:text-3xl font-bold text-slate-800">Mix & Match!</h1>
+                                    <p className="text-xs sm:text-base text-slate-600">Oyuncu: <span className="font-semibold text-orange-600">{nickname}</span></p>
+                                </div>
+                                <button
+                                    onClick={resetGame}
+                                    className="flex items-center gap-2 px-3 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors text-xs sm:text-base"
+                                >
+                                    🔄 Yeni Oyun
+                                </button>
+                            </div>
+
+                            {submitted && (
+                                <div className="mb-4 sm:mb-6 p-4 sm:p-6 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white text-center">
+                                    <h2 className="text-2xl sm:text-3xl font-bold mb-2">Skorun: {score}%</h2>
+                                    <p className="text-sm sm:text-lg">14 sorudan {Math.round((score / 100) * 14)} doğru!</p>
+                                </div>
+                            )}
+
+                            {draggedItem && (
+                                <div className="mb-3 p-2 sm:p-3 bg-orange-200 border-2 border-orange-500 rounded-lg text-center font-semibold text-orange-800 text-xs sm:text-base">
+                                    ✋ {draggedItem} - Bir satıra dokun
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-8">
+                                {/* P&L SATIRLARI - Mobilde 55% genişlik */}
+                                <div className="md:col-span-1">
+                                    <h2 className="text-sm sm:text-xl font-bold text-slate-800 mb-2 sm:mb-4">P&L Satırları</h2>
+                                    <div className="bg-slate-50 rounded-lg p-2 space-y-1 sm:space-y-2 items-container">
+                                        {[1,2,3,4,5,6,7,8,9,10,11,12,13,14].map(row => (
+                                            <div
+                                                key={row}
+                                                onDrop={() => handleDrop(row)}
+                                                onDragOver={handleDragOver}
+                                                onTouchEnd={(e) => handleTouchEnd(e, row)}
+                                                className={`p-2 sm:p-4 rounded-lg border-2 border-dashed min-h-12 sm:min-h-16 flex items-center justify-between transition-all
+                                                    ${placements[row] ? 'bg-orange-100 border-orange-400' : 'bg-white border-slate-300'}
+                                                    ${submitted && placements[row] === correctAnswers[row] ? 'bg-green-100 border-green-500' : ''}
+                                                    ${submitted && placements[row] && placements[row] !== correctAnswers[row] ? 'bg-red-100 border-red-500' : ''}
+                                                    ${row === 8 ? 'border-red-400 border-4' : ''}
+                                                    ${row === 14 ? 'bg-slate-800 text-white border-slate-800' : ''}
+                                                    ${draggedItem && !placements[row] ? 'border-orange-500 bg-orange-50 scale-105' : ''}
+                                                `}
+                                            >
+                                                <div className="flex items-center gap-1 sm:gap-3 flex-1 min-w-0">
+                                                    <span className="font-bold text-sm sm:text-lg flex-shrink-0">{row}</span>
+                                                    {placements[row] ? (
+                                                        <span className="font-medium text-xs sm:text-base truncate">{placements[row]}</span>
+                                                    ) : (
+                                                        <span className="text-slate-400 text-xs sm:text-sm">Dokun...</span>
+                                                    )}
+                                                </div>
+                                                {placements[row] && !submitted && (
+                                                    <button
+                                                        onClick={() => removeItem(row)}
+                                                        className="text-red-500 hover:text-red-700 font-bold text-base sm:text-xl px-1 sm:px-2 flex-shrink-0"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* P&L KALEMLERİ - Mobilde 45% genişlik */}
+                                <div className="md:col-span-1">
+                                    <h2 className="text-sm sm:text-xl font-bold text-slate-800 mb-2 sm:mb-4">Kalemler</h2>
+                                    <div className="bg-slate-50 rounded-lg p-2 space-y-2 items-container">
+                                        {availableItems.map(item => (
+                                            <div
+                                                key={item}
+                                                draggable={!submitted}
+                                                onDragStart={() => handleDragStart(item)}
+                                                onTouchStart={(e) => handleTouchStart(e, item)}
+                                                onTouchMove={handleTouchMove}
+                                                className={`bg-orange-500 text-white p-2 sm:p-4 rounded-lg font-medium text-center shadow-md text-xs sm:text-base
+                                                    ${submitted ? 'opacity-50 cursor-not-allowed' : 'cursor-move hover:bg-orange-600 hover:shadow-lg active:scale-95 transition-all'}
+                                                    ${draggedItem === item ? 'dragging ring-4 ring-orange-300' : ''}
+                                                `}
+                                            >
+                                                {item}
+                                            </div>
+                                        ))}
+                                        {availableItems.length === 0 && !submitted && (
+                                            <p className="text-center text-slate-500 py-4 sm:py-8 text-xs sm:text-base">Tümü yerleştirildi! 🎉</p>
+                                        )}
+                                    </div>
+
+                                    {!submitted && Object.keys(placements).length === 14 && (
+                                        <button
+                                            onClick={handleSubmit}
+                                            className="w-full mt-4 sm:mt-6 bg-green-600 text-white py-3 sm:py-4 rounded-lg font-bold text-base sm:text-lg hover:bg-green-700 shadow-lg transition-all"
+                                        >
+                                            Gönder ✓
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {submitted && leaderboard.length > 0 && (
+                                <div className="mt-4 sm:mt-8 bg-slate-50 rounded-xl p-3 sm:p-6">
+                                    <h3 className="text-base sm:text-xl font-bold text-slate-800 mb-3 sm:mb-4 flex items-center gap-2">
+                                        🏆 Liderlik Tablosu
+                                    </h3>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
+                                        {leaderboard.map((entry, idx) => (
+                                            <div
+                                                key={idx}
+                                                className={`p-2 sm:p-4 rounded-lg flex justify-between items-center
+                                                    ${entry.nickname === nickname ? 'bg-orange-100 border-2 border-orange-500' : 'bg-white'}
+                                                `}
+                                            >
+                                                <span className="font-semibold text-slate-700 text-xs sm:text-base">
+                                                    {idx + 1}. {entry.nickname}
+                                                </span>
+                                                <span className="font-bold text-orange-600 text-sm sm:text-lg">{entry.score}%</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<MixMatchGame />, document.getElementById('root'));
+    </script>
+</body>
+</html>
